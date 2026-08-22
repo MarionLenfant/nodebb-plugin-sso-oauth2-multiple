@@ -326,3 +326,32 @@ OAuth.whitelistFields = async (params) => {
 
 	return params;
 };
+
+OAuth.handleLogout = async (payload) => {
+	const strategies = await OAuth.listStrategies(true);
+	const candidates = strategies.filter(strategy => strategy.enabled && strategy.logoutUrl);
+	if (!candidates.length) {
+		return payload;
+	}
+
+	// This filter carries no uid, so the strategy backing the session cannot be resolved
+	// when several providers advertise a logout url.
+	if (candidates.length > 1) {
+		winston.warn('[plugin/sso-oauth2-multiple] Several enabled strategies define a logout url, skipping provider logout');
+		return payload;
+	}
+
+	const [strategy] = candidates;
+	try {
+		const endSession = new URL(strategy.logoutUrl);
+		endSession.searchParams.set('client_id', strategy.id);
+		// Providers compare this uri strictly, hence the enforced trailing slash
+		endSession.searchParams.set('post_logout_redirect_uri', `${nconf.get('url').replace(/\/$/, '')}/`);
+		payload.next = endSession.toString();
+	} catch (err) {
+		// A malformed logout url must not prevent the local logout from completing
+		winston.error(`[plugin/sso-oauth2-multiple] Invalid logout url for strategy ${strategy.name}: ${err.message}`);
+	}
+
+	return payload;
+};
